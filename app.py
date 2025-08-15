@@ -66,17 +66,35 @@ async def sensors_post(data: dict):
     sensors_col.insert_one(data)
     return {"status":"ok", "example": {"temperature":25, "humidity":40}}
 
+# @app.get("/api/sensors/latest")
+# async def sensors_latest():
+#     """Get latest sensor reading"""
+#     if not sensor_history:
+#         return {"message":"no data"}
+#     return sensor_history[-1]
+
+# @app.get("/api/sensors/history")
+# async def sensors_history_api(limit: int = 100):
+#     """Get last N sensor readings"""
+#     return list(sensor_history)[-limit:]
+
 @app.get("/api/sensors/latest")
 async def sensors_latest():
-    """Get latest sensor reading"""
-    if not sensor_history:
+    """Get latest sensor reading from MongoDB"""
+    latest = sensors_col.find_one(sort=[("timestamp", -1)])
+    if not latest:
         return {"message":"no data"}
-    return sensor_history[-1]
+    latest["_id"] = str(latest["_id"])  # convert ObjectId to string
+    return latest
 
 @app.get("/api/sensors/history")
 async def sensors_history_api(limit: int = 100):
-    """Get last N sensor readings"""
-    return list(sensor_history)[-limit:]
+    """Get last N sensor readings from MongoDB"""
+    data = list(sensors_col.find().sort("timestamp", -1).limit(limit))
+    for d in data:
+        d["_id"] = str(d["_id"])
+    return data
+
 
 # ------------------- Images -------------------
 @app.post("/api/images")
