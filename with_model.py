@@ -8,12 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import requests
-
+from ultralytics import YOLO
+import torch
 # ---------- Load environment variables ----------
 load_dotenv()
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
 DB_NAME = os.environ.get("DB_NAME", "iot_weed_ml")
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+MODEL_PATH = "./model/best_custom_model.pt"
+yolo_model = YOLO(MODEL_PATH)  # automatically uses CPU or GPU
 
 if not IMGBB_API_KEY:
     raise Exception("Please set IMGBB_API_KEY in environment variables")
@@ -48,6 +53,56 @@ latest_frame_bytes: Optional[bytes] = None
 latest_annotated_path: Optional[str] = None
 latest_control = {"cmd": "stop", "speed": 150, "timestamp": datetime.now(timezone.utc).isoformat()}
 latest_infer = {"available": False, "timestamp": None, "boxes": [], "score": None, "fname": None}
+
+
+
+
+@app.post("/api/infer/weed")
+async def infer_weed_simple(image: UploadFile = File(...)):
+    try:
+        if not image:
+            return JSONResponse({"error": "No image sent"}, 400)
+
+        # Save uploaded image
+        img_bytes = await image.read()
+        fname = f"frame_{int(time.time()*1000)}.jpg"
+        path = os.path.join("uploads", fname)
+        with open(path, "wb") as f:
+            f.write(img_bytes)
+
+        # Run YOLOv8 inference
+        results = yolo_model(path)
+        weed_detected = False
+
+        # Check if "weed" is detected
+        for r in results:
+            if r.boxes:
+                class_ids = r.boxes.cls.cpu().numpy().tolist()
+                for cls_id in class_ids:
+                    cls_name = r.names[int(cls_id)]
+                    if cls_name.lower() == "weed":
+                        weed_detected = True
+                        break
+            if weed_detected:
+                break
+
+        # Optionally save annotated image
+        import cv2
+        annotated_img = results[0].plot()
+        annotated_path = f"uploads/annotated_{fname}"
+        cv2.imwrite(annotated_path, annotated_img)
+        img_url = upload_to_imgbb(annotated_path)
+
+        return {
+            "status": "ok",
+            "weed_detected": weed_detected,
+            "image_url": img_url
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # ---------- ImgBB Upload ----------
 def upload_to_imgbb(img_path, expiration=None):
