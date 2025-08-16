@@ -140,14 +140,19 @@ async def mjpeg_stream():
 @app.post("/api/control")
 async def control_post(body: dict = Body(...)):
     global latest_control
-    cmd = str(body.get("cmd", "stop")).lower()
-    speed = int(body.get("speed", 150))
-    if cmd not in ("forward", "backward", "left", "right", "stop"):
-        return JSONResponse({"error": "invalid cmd"}, 400)
-    speed = max(0, min(255, speed))
-    latest_control = {"cmd": cmd, "speed": speed, "timestamp": datetime.utcnow().isoformat()}
-    control_col.insert_one(latest_control)
-    return {"status": "ok", "control": latest_control}
+    try:
+        cmd = str(body.get("cmd","stop")).lower()
+        speed = int(body.get("speed",150))
+        if cmd not in ("forward","backward","left","right","stop"):
+            return JSONResponse({"error":"invalid cmd"}, 400)
+        speed = max(0, min(255, speed))
+        latest_control = {"cmd": cmd, "speed": speed, "timestamp": datetime.utcnow().isoformat()}
+        control_col.insert_one(latest_control)
+        return {"status":"ok","control":latest_control,
+                "example":{"cmd":"forward","speed":150}}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+
 
 @app.get("/api/control/latest")
 async def control_latest():
