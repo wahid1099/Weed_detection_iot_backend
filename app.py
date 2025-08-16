@@ -8,12 +8,19 @@ from dotenv import load_dotenv
 import requests
 from pymongo import MongoClient
 from datetime import timezone
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
 
 # ---------- Load env ----------
 load_dotenv()
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
 DB_NAME = os.environ.get("DB_NAME", "iot_weed_ml")
+
+
+
 
 if not IMGBB_API_KEY:
     raise Exception("Please set IMGBB_API_KEY in your environment variables")
@@ -32,6 +39,21 @@ telemetry_col = db["telemetry"]
 app = FastAPI()
 os.makedirs("uploads", exist_ok=True)
 
+
+# ---------- CORS ----------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "*", 
+        "http://localhost",
+        "http://localhost:3000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # ---------- In-Memory Storage ----------
 SENSOR_HISTORY_MAX = 5000
 sensor_history = deque(maxlen=SENSOR_HISTORY_MAX)
@@ -66,17 +88,7 @@ async def sensors_post(data: dict):
     sensors_col.insert_one(data)
     return {"status":"ok", "example": {"temperature":25, "humidity":40}}
 
-# @app.get("/api/sensors/latest")
-# async def sensors_latest():
-#     """Get latest sensor reading"""
-#     if not sensor_history:
-#         return {"message":"no data"}
-#     return sensor_history[-1]
 
-# @app.get("/api/sensors/history")
-# async def sensors_history_api(limit: int = 100):
-#     """Get last N sensor readings"""
-#     return list(sensor_history)[-limit:]
 
 @app.get("/api/sensors/latest")
 async def sensors_latest():
