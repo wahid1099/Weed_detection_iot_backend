@@ -147,11 +147,15 @@ async def control_post(body: dict = Body(...)):
             return JSONResponse({"error":"invalid cmd"}, 400)
         speed = max(0, min(255, speed))
         latest_control = {"cmd": cmd, "speed": speed, "timestamp": datetime.utcnow().isoformat()}
-        control_col.insert_one(latest_control)
+        result = control_col.insert_one(latest_control)
+
+        # Convert ObjectId to string
+        latest_control["_id"] = str(result.inserted_id)
         return {"status":"ok","control":latest_control,
                 "example":{"cmd":"forward","speed":150}}
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
+
 
 
 @app.get("/api/control/latest")
