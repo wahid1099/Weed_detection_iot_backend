@@ -57,6 +57,7 @@ latest_infer = {"available": False, "timestamp": None, "boxes": [], "score": Non
 
 
 
+# ------------------- Weed Inference -------------------
 @app.post("/api/infer/weed")
 async def infer_weed_simple(image: UploadFile = File(...)):
     try:
@@ -74,17 +75,18 @@ async def infer_weed_simple(image: UploadFile = File(...)):
         results = yolo_model(path)
         weed_detected = False
 
-        # Check if "weed" is detected
+        # Define which classes are considered "weed"
+        WEED_CLASSES = {"weed", "clover", "dandelion", "crabgrass", "thistle"}
+
+        detected_classes = []
         for r in results:
             if r.boxes:
                 class_ids = r.boxes.cls.cpu().numpy().tolist()
                 for cls_id in class_ids:
-                    cls_name = r.names[int(cls_id)]
-                    if cls_name.lower() == "weed":
+                    cls_name = r.names[int(cls_id)].lower()
+                    detected_classes.append(cls_name)
+                    if cls_name in WEED_CLASSES:
                         weed_detected = True
-                        break
-            if weed_detected:
-                break
 
         # Optionally save annotated image
         import cv2
@@ -96,6 +98,7 @@ async def infer_weed_simple(image: UploadFile = File(...)):
         return {
             "status": "ok",
             "weed_detected": weed_detected,
+            "detected_classes": detected_classes,  # show what model saw
             "image_url": img_url
         }
 
@@ -253,18 +256,184 @@ async def latest_annotated():
 # ------------------- Simple UI -------------------
 INDEX = """
 <!doctype html>
-<html>
+<html lang=\"en\">
 <head>
-<meta charset="utf-8"/>
-<title>RC Weed Rover</title>
+  <meta charset=\"utf-8\"/>
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>RC Weed Rover - Model Test</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f4f8fb;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      background: #fff;
+      margin-top: 60px;
+      padding: 32px 28px 24px 28px;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      max-width: 400px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      color: #2a3b4c;
+      margin-bottom: 16px;
+      font-size: 2rem;
+    }
+    .upload-label {
+      display: block;
+      background: #e3eaf2;
+      color: #2a3b4c;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: 16px;
+      transition: background 0.2s;
+    }
+    .upload-label:hover {
+      background: #d0d8e0;
+    }
+    input[type='file'] {
+      display: none;
+    }
+    .preview {
+      margin-bottom: 16px;
+      max-width: 100%;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .btn {
+      background: #2a7ade;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-bottom: 12px;
+      transition: background 0.2s;
+    }
+    .btn:disabled {
+      background: #b0c4de;
+      cursor: not-allowed;
+    }
+    .result {
+      margin-top: 18px;
+      font-size: 1.1rem;
+      font-weight: 500;
+      padding: 12px 18px;
+      border-radius: 8px;
+      display: inline-block;
+    }
+    .weed {
+      background: #ffeaea;
+      color: #d32f2f;
+      border: 1px solid #f8bcbc;
+    }
+    .no-weed {
+      background: #eaffea;
+      color: #388e3c;
+      border: 1px solid #b6eab6;
+    }
+    .loading {
+      color: #2a7ade;
+      margin-top: 10px;
+    }
+    .annotated-img {
+      margin-top: 18px;
+      max-width: 100%;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+  </style>
 </head>
 <body>
-<h1>RC Weed Rover</h1>
-<form action="/api/images" method="post" enctype="multipart/form-data">
-    <input type="file" name="image">
-    <input type="submit" value="Upload">
-</form>
-<p>Use /api/sensors, /api/control, /api/telemetry endpoints as JSON POST requests.</p>
+  <div class=\"container\">
+    <h1>Weed Detection Test</h1>
+    <label class=\"upload-label\" for=\"file-input\">Choose an image to test the model</label>
+    <input id=\"file-input\" type=\"file\" accept=\"image/*\" />
+    <img id=\"preview\" class=\"preview\" style=\"display:none\" />
+    <button id=\"detect-btn\" class=\"btn\" disabled>Detect Weed</button>
+    <div id=\"loading\" class=\"loading\" style=\"display:none\">Detecting...</div>
+    <div id=\"result\"></div>
+    <img id=\"annotated-img\" class=\"annotated-img\" style=\"display:none\" />
+  </div>
+  <script>
+    const fileInput = document.getElementById('file-input');
+    const preview = document.getElementById('preview');
+    const detectBtn = document.getElementById('detect-btn');
+    const resultDiv = document.getElementById('result');
+    const loadingDiv = document.getElementById('loading');
+    const annotatedImg = document.getElementById('annotated-img');
+    let selectedFile = null;
+
+    fileInput.addEventListener('change', function() {
+      const file = this.files[0];
+      if (file) {
+        selectedFile = file;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          preview.src = e.target.result;
+          preview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+        detectBtn.disabled = false;
+        resultDiv.innerHTML = '';
+        annotatedImg.style.display = 'none';
+      } else {
+        preview.style.display = 'none';
+        detectBtn.disabled = true;
+        resultDiv.innerHTML = '';
+        annotatedImg.style.display = 'none';
+      }
+    });
+
+    detectBtn.addEventListener('click', async function() {
+      if (!selectedFile) return;
+      detectBtn.disabled = true;
+      loadingDiv.style.display = 'block';
+      resultDiv.innerHTML = '';
+      annotatedImg.style.display = 'none';
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+      try {
+        const response = await fetch('/api/infer/weed', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        loadingDiv.style.display = 'none';
+        detectBtn.disabled = false;
+        if (data.error) {
+          resultDiv.innerHTML = `<span class=\"result weed\">Error: ${data.error}</span>`;
+        } else {
+          if (data.weed_detected) {
+            resultDiv.innerHTML = `<span class=\"result weed\">Weed Detected! 🌱</span>`;
+          } else {
+            resultDiv.innerHTML = `<span class=\"result no-weed\">No Weed Detected ✔️</span>`;
+          }
+          if (data.image_url) {
+            annotatedImg.src = data.image_url;
+            annotatedImg.style.display = 'block';
+          }
+        }
+      } catch (err) {
+        loadingDiv.style.display = 'none';
+        detectBtn.disabled = false;
+        resultDiv.innerHTML = `<span class=\"result weed\">Error: ${err.message}</span>`;
+      }
+    });
+  </script>
 </body>
 </html>
 """
